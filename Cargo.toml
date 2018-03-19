@@ -1,5 +1,6 @@
 [package]
 name = "pfwd"
+description = "A simple TCP to TCP forwarder"
 version = "0.1.0"
 authors = ["Daniel Mason <daniel.mason@apolitical.co>"]
 license = "MIT"
