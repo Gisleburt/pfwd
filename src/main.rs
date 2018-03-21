@@ -1,5 +1,5 @@
 use std::io::prelude::*;
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, Shutdown};
 use std::thread;
 use std::sync::mpsc::{self, TryRecvError};
 
@@ -16,40 +16,66 @@ fn main() {
                 let mut outgoing2 = outgoing.try_clone().expect("Could not clone");
                 let incoming2 = incoming.try_clone().expect("Could not clone");
 
-                let (tx, rx) = mpsc::channel();
-                let t = thread::spawn(move || {
+                let (tx1, rx1) = mpsc::channel();
+                let (tx2, rx2) = mpsc::channel();
+
+                let t1 = thread::spawn(move || {
                     loop {
-                        match rx.try_recv() {
+                        match rx2.try_recv() {
                             Ok(_) | Err(TryRecvError::Disconnected) => {
                                 println!("Ending");
                                 break
                             },
                             Err(TryRecvError::Empty) => {}
                         }
-                        print!("-");
-                        stream_to_stream_blocking(&incoming, &outgoing)
+                        match stream_to_stream_non_blocking(&incoming, &outgoing) {
+                            Err(_) => break,
+                            _ => {}
+                        }
                     }
+                    tx1.send(());
+                    incoming.shutdown(Shutdown::Read);
+                    outgoing.shutdown(Shutdown::Write);
                 });
-                stream_to_stream_blocking(&outgoing2, &incoming2);
+                let t2 = thread::spawn(move || {
+                    loop {
+                        match rx1.try_recv() {
+                            Ok(_) | Err(TryRecvError::Disconnected) => {
+                                println!("Ending");
+                                break
+                            },
+                            Err(TryRecvError::Empty) => {}
+                        }
+                        match stream_to_stream_non_blocking(&outgoing2, &incoming2) {
+                            Err(_) => break,
+                            _ => {}
+                        }
+                    }
+                    tx2.send(());
+                    outgoing2.shutdown(Shutdown::Read);
+                    incoming2.shutdown(Shutdown::Write);
+                });
+
                 println!("Here");
-                let _ = tx.send(());
-                let _ = t.join();
+                let _ = t1.join();
+                let _ = t2.join();
+                println!("All done")
             },
             Err(e) => eprintln!("Something went wrong {:?}", e),
         }
     }
 }
 
-fn stream_to_stream_blocking(from_stream: &TcpStream, mut to_stream: &TcpStream) {
-    from_stream.bytes()
-        .filter(|b| b.is_ok())
-        .map(|b| b.unwrap())
-        .map(|b| to_stream.write(&[b]))
-        .filter(|r| r.is_err())
-        .map(|r| r.err())
-        .map(|e| e.unwrap())
-        .for_each(|e| eprintln!("{:?}", e) );
-}
+//fn stream_to_stream_blocking(from_stream: &TcpStream, mut to_stream: &TcpStream) {
+//    from_stream.bytes()
+//        .filter(|b| b.is_ok())
+//        .map(|b| b.unwrap())
+//        .map(|b| to_stream.write(&[b]))
+//        .filter(|r| r.is_err())
+//        .map(|r| r.err())
+//        .map(|e| e.unwrap())
+//        .for_each(|e| eprintln!("{:?}", e) );
+//}
 
 fn stream_to_stream_non_blocking(mut from_stream: &TcpStream, mut to_stream: &TcpStream) -> Result<(), ()>{
     let mut buffer = [0; 1];
